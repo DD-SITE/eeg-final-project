@@ -1,13 +1,16 @@
 from flask import Flask, request, render_template_string
 import pandas as pd
-import numpy as np
 import joblib
 import os
+import numpy as np
 
-# Load your trained pipeline/model
-model = joblib.load("model.pkl")
+# -----------------------------
+# Load preprocessing & model(s)
+# -----------------------------
+preprocessor = joblib.load("preprocessor.pkl")   # VarianceThreshold + PCA
+ensemble_models = joblib.load("ensemble.pkl")   # Top trained classifiers per batch
 
-# Basic HTML page
+# HTML template
 HTML_PAGE = """
 <!doctype html>
 <title>EEG Classifier</title>
@@ -22,6 +25,9 @@ HTML_PAGE = """
 {% endif %}
 """
 
+# -----------------------------
+# Flask app
+# -----------------------------
 app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
@@ -34,33 +40,27 @@ def predict():
     if not file:
         return "No file uploaded", 400
 
-    # Read the uploaded CSV
+    # Read uploaded CSV
     df = pd.read_csv(file)
 
-    # Ensure df has the correct number of features
-    expected_features = model.n_features_in_
-    current_features = df.shape[1]
+    # Transform features using saved preprocessing pipeline
+    X_input = preprocessor.transform(df)
 
-    if current_features < expected_features:
-        # Pad missing columns with zeros
-        for i in range(expected_features - current_features):
-            df[f"missing_{i}"] = 0
-    elif current_features > expected_features:
-        # Drop extra columns
-        df = df.iloc[:, :expected_features]
+    # Predict using all top models in ensemble
+    predictions = {}
+    for batch_idx, batch_models in enumerate(ensemble_models):
+        for name, clf, _ in batch_models:  # unpack (name, model, test_acc)
+            preds = clf.predict(X_input)
+            predictions[f"Batch{batch_idx+1}_{name}"] = preds
 
-    # Convert to NumPy array to avoid feature name warnings
-    X_input = df.to_numpy()
-
-    # Make predictions
-    preds = model.predict(X_input)
-
-    # Convert results to DataFrame for display
-    result_df = pd.DataFrame(preds, columns=["Predicted_Class"])
+    # Convert to DataFrame for display
+    result_df = pd.DataFrame(predictions)
 
     return render_template_string(HTML_PAGE, prediction=result_df.to_string(index=False))
 
+# -----------------------------
+# Run Flask
+# -----------------------------
 if __name__ == "__main__":
-    # Use PORT environment variable for Render
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)

@@ -5,10 +5,9 @@ import joblib
 import os
 
 # -----------------------------
-# Load preprocessor and ensemble
+# Load ensemble models only
 # -----------------------------
-preprocessor = joblib.load("preprocessor.pkl")  # VarianceThreshold + PCA
-ensemble_models = joblib.load("ensemble.pkl")   # top_models_per_batch
+ensemble_models = joblib.load("ensemble.pkl")  # top_models_per_batch
 
 # -----------------------------
 # HTML template
@@ -73,9 +72,9 @@ def predict():
         return f"Error reading CSV: {e}", 400
 
     # -------------------------
-    # Pad CSV to match preprocessor input
+    # Pad CSV to match ensemble input (2000 features)
     # -------------------------
-    expected_features = preprocessor.named_steps['variance'].n_features_in_
+    expected_features = 2000
     current_features = df.shape[1]
 
     if current_features < expected_features:
@@ -87,21 +86,13 @@ def predict():
     X_input = df.to_numpy()
 
     # -------------------------
-    # Transform using preprocessor
-    # -------------------------
-    try:
-        X_transformed = preprocessor.transform(X_input)
-    except Exception as e:
-        return f"Error in preprocessing: {e}", 400
-
-    # -------------------------
     # Predict using ensemble
     # -------------------------
     predictions = {}
     for batch_idx, batch_models in enumerate(ensemble_models):
         for name, clf, _ in batch_models:
             try:
-                preds = clf.predict(X_transformed)
+                preds = clf.predict(X_input)
                 predictions[f"Batch{batch_idx+1}_{name}"] = preds
             except Exception as e:
                 predictions[f"Batch{batch_idx+1}_{name}"] = f"Error: {e}"

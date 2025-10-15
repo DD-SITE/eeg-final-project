@@ -4,13 +4,10 @@ import numpy as np
 import joblib
 import os
 
-# Load model and preprocessor
+# Load trained model
 model = joblib.load("model.pkl")
-preprocessor = joblib.load("preprocessor.pkl")  # must include feature extraction steps
 
-# -----------------------------
-# HTML template with styling
-# -----------------------------
+# HTML template with CSS for better UI
 HTML_PAGE = """
 <!doctype html>
 <html lang="en">
@@ -31,19 +28,25 @@ th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
 th { background-color: #4CAF50; color: white; }
 tr:nth-child(even){background-color: #f9f9f9;}
 tr:hover {background-color: #f1f1f1;}
+.pred-0 { color: red; font-weight: bold; }
+.pred-1 { color: green; font-weight: bold; }
+.summary { font-weight: bold; margin-bottom: 15px; text-align: center; }
 </style>
 </head>
 <body>
 <div class="container">
-<h1>EEG Classification</h1>
+<h1>EEG Classifier</h1>
 <form action="/predict" method="post" enctype="multipart/form-data">
   <input type="file" name="file" required>
   <input type="submit" value="Upload & Predict">
 </form>
 
+{% if summary %}
+<div class="summary">{{ summary }}</div>
+{% endif %}
+
 {% if prediction %}
 <div class="table-container">
-<h2>Prediction Results:</h2>
 {{ prediction|safe }}
 </div>
 {% endif %}
@@ -67,20 +70,41 @@ def predict():
     if not file:
         return "No file uploaded", 400
 
-    # Read uploaded CSV
-    raw_df = pd.read_csv(file)
+    # Read CSV
+    df = pd.read_csv(file)
 
-    # Preprocess features
-    processed_features = preprocessor.transform(raw_df)
+    # Pad or truncate to match model features
+    expected_features = model.n_features_in_
+    current_features = df.shape[1]
+
+    if current_features < expected_features:
+        for i in range(expected_features - current_features):
+            df[f"missing_{i}"] = 0
+    elif current_features > expected_features:
+        df = df.iloc[:, :expected_features]
+
+    X_input = df.to_numpy()
 
     # Predict
-    preds = model.predict(processed_features)
+    preds = model.predict(X_input)
 
-    # Convert to DataFrame for nice table display
-    result_df = pd.DataFrame(preds, columns=["Predicted_Class"])
-    result_html = result_df.to_html(index=True, border=0)
+    # Convert to DataFrame with row numbers
+    result_df = pd.DataFrame({
+        "Row": range(1, len(preds)+1),
+        "Predicted_Class": preds
+    })
 
-    return render_template_string(HTML_PAGE, prediction=result_html)
+    # Compute summary
+    count_0 = (preds == 0).sum()
+    count_1 = (preds == 1).sum()
+    summary_text = f"Predicted 1: {count_1} samples, Predicted 0: {count_0} samples"
+
+    # Apply CSS classes for coloring
+    result_html = result_df.style.applymap(
+        lambda v: 'color: green; font-weight: bold;' if v==1 else ('color: red; font-weight: bold;' if v==0 else '')
+    , subset=['Predicted_Class']).render()
+
+    return render_template_string(HTML_PAGE, prediction=result_html, summary=summary_text)
 
 # -----------------------------
 # Run Flask

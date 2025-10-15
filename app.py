@@ -1,28 +1,55 @@
 from flask import Flask, request, render_template_string
 import pandas as pd
+import numpy as np
 import joblib
 import os
-import numpy as np
 
 # -----------------------------
-# Load preprocessing & model(s)
+# Load preprocessor and ensemble
 # -----------------------------
-preprocessor = joblib.load("preprocessor.pkl")   # VarianceThreshold + PCA
-ensemble_models = joblib.load("ensemble.pkl")   # Top trained classifiers per batch
+preprocessor = joblib.load("preprocessor.pkl")  # VarianceThreshold + PCA
+ensemble_models = joblib.load("ensemble.pkl")   # top_models_per_batch
 
+# -----------------------------
 # HTML template
+# -----------------------------
 HTML_PAGE = """
 <!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
 <title>EEG Classifier</title>
-<h1>Upload EEG CSV file</h1>
-<form action="/predict" method=post enctype=multipart/form-data>
-  <input type=file name=file><br><br>
-  <input type=submit value=Upload>
+<style>
+body { font-family: Arial, sans-serif; margin: 40px; background: #f7f7f7; }
+h1 { color: #333; }
+form { margin-bottom: 20px; }
+input[type=file] { padding: 5px; }
+input[type=submit] { padding: 8px 15px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+input[type=submit]:hover { background: #45a049; }
+table { border-collapse: collapse; width: 100%; background: white; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+th { background-color: #4CAF50; color: white; }
+tr:nth-child(even){background-color: #f2f2f2;}
+pre { white-space: pre-wrap; word-wrap: break-word; }
+.container { max-width: 1000px; margin: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>EEG Classifier</h1>
+<form action="/predict" method="post" enctype="multipart/form-data">
+  <input type="file" name="file" required>
+  <input type="submit" value="Upload & Predict">
 </form>
 {% if prediction %}
-  <h2>Prediction Result:</h2>
-  <pre>{{ prediction }}</pre>
+<h2>Prediction Result:</h2>
+<div style="overflow-x:auto;">
+{{ prediction|safe }}
+</div>
 {% endif %}
+</div>
+</body>
+</html>
 """
 
 # -----------------------------
@@ -40,23 +67,52 @@ def predict():
     if not file:
         return "No file uploaded", 400
 
-    # Read uploaded CSV
-    df = pd.read_csv(file)
+    try:
+        df = pd.read_csv(file)
+    except Exception as e:
+        return f"Error reading CSV: {e}", 400
 
-    # Transform features using saved preprocessing pipeline
-    X_input = preprocessor.transform(df)
+    # -------------------------
+    # Pad CSV to match preprocessor input
+    # -------------------------
+    expected_features = preprocessor.named_steps['variance'].n_features_in_
+    current_features = df.shape[1]
 
-    # Predict using all top models in ensemble
+    if current_features < expected_features:
+        for i in range(expected_features - current_features):
+            df[f"missing_{i}"] = 0
+    elif current_features > expected_features:
+        df = df.iloc[:, :expected_features]
+
+    X_input = df.to_numpy()
+
+    # -------------------------
+    # Transform using preprocessor
+    # -------------------------
+    try:
+        X_transformed = preprocessor.transform(X_input)
+    except Exception as e:
+        return f"Error in preprocessing: {e}", 400
+
+    # -------------------------
+    # Predict using ensemble
+    # -------------------------
     predictions = {}
     for batch_idx, batch_models in enumerate(ensemble_models):
-        for name, clf, _ in batch_models:  # unpack (name, model, test_acc)
-            preds = clf.predict(X_input)
-            predictions[f"Batch{batch_idx+1}_{name}"] = preds
+        for name, clf, _ in batch_models:
+            try:
+                preds = clf.predict(X_transformed)
+                predictions[f"Batch{batch_idx+1}_{name}"] = preds
+            except Exception as e:
+                predictions[f"Batch{batch_idx+1}_{name}"] = f"Error: {e}"
 
-    # Convert to DataFrame for display
+    # -------------------------
+    # Convert to nice HTML table
+    # -------------------------
     result_df = pd.DataFrame(predictions)
+    result_html = result_df.to_html(index=True, classes="table table-striped", border=0)
 
-    return render_template_string(HTML_PAGE, prediction=result_df.to_string(index=False))
+    return render_template_string(HTML_PAGE, prediction=result_html)
 
 # -----------------------------
 # Run Flask

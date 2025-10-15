@@ -4,13 +4,12 @@ import numpy as np
 import joblib
 import os
 
-# -----------------------------
-# Load ensemble models only
-# -----------------------------
-ensemble_models = joblib.load("ensemble.pkl")  # top_models_per_batch
+# Load model and preprocessor
+model = joblib.load("model.pkl")
+preprocessor = joblib.load("preprocessor.pkl")  # must include feature extraction steps
 
 # -----------------------------
-# HTML template
+# HTML template with styling
 # -----------------------------
 HTML_PAGE = """
 <!doctype html>
@@ -19,30 +18,32 @@ HTML_PAGE = """
 <meta charset="UTF-8">
 <title>EEG Classifier</title>
 <style>
-body { font-family: Arial, sans-serif; margin: 40px; background: #f7f7f7; }
-h1 { color: #333; }
-form { margin-bottom: 20px; }
-input[type=file] { padding: 5px; }
-input[type=submit] { padding: 8px 15px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin: 0; padding: 0; }
+.container { max-width: 900px; margin: 40px auto; background: #fff; padding: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-radius: 10px; }
+h1 { text-align: center; color: #333; }
+form { text-align: center; margin-bottom: 25px; }
+input[type=file] { padding: 8px; }
+input[type=submit] { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
 input[type=submit]:hover { background: #45a049; }
-table { border-collapse: collapse; width: 100%; background: white; }
+.table-container { overflow-x:auto; margin-top: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
 th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
 th { background-color: #4CAF50; color: white; }
-tr:nth-child(even){background-color: #f2f2f2;}
-pre { white-space: pre-wrap; word-wrap: break-word; }
-.container { max-width: 1000px; margin: auto; }
+tr:nth-child(even){background-color: #f9f9f9;}
+tr:hover {background-color: #f1f1f1;}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>EEG Classifier</h1>
+<h1>EEG Classification</h1>
 <form action="/predict" method="post" enctype="multipart/form-data">
   <input type="file" name="file" required>
   <input type="submit" value="Upload & Predict">
 </form>
+
 {% if prediction %}
-<h2>Prediction Result:</h2>
-<div style="overflow-x:auto;">
+<div class="table-container">
+<h2>Prediction Results:</h2>
 {{ prediction|safe }}
 </div>
 {% endif %}
@@ -66,42 +67,18 @@ def predict():
     if not file:
         return "No file uploaded", 400
 
-    try:
-        df = pd.read_csv(file)
-    except Exception as e:
-        return f"Error reading CSV: {e}", 400
+    # Read uploaded CSV
+    raw_df = pd.read_csv(file)
 
-    # -------------------------
-    # Pad CSV to match ensemble input (2000 features)
-    # -------------------------
-    expected_features = 2000
-    current_features = df.shape[1]
+    # Preprocess features
+    processed_features = preprocessor.transform(raw_df)
 
-    if current_features < expected_features:
-        for i in range(expected_features - current_features):
-            df[f"missing_{i}"] = 0
-    elif current_features > expected_features:
-        df = df.iloc[:, :expected_features]
+    # Predict
+    preds = model.predict(processed_features)
 
-    X_input = df.to_numpy()
-
-    # -------------------------
-    # Predict using ensemble
-    # -------------------------
-    predictions = {}
-    for batch_idx, batch_models in enumerate(ensemble_models):
-        for name, clf, _ in batch_models:
-            try:
-                preds = clf.predict(X_input)
-                predictions[f"Batch{batch_idx+1}_{name}"] = preds
-            except Exception as e:
-                predictions[f"Batch{batch_idx+1}_{name}"] = f"Error: {e}"
-
-    # -------------------------
-    # Convert to nice HTML table
-    # -------------------------
-    result_df = pd.DataFrame(predictions)
-    result_html = result_df.to_html(index=True, classes="table table-striped", border=0)
+    # Convert to DataFrame for nice table display
+    result_df = pd.DataFrame(preds, columns=["Predicted_Class"])
+    result_html = result_df.to_html(index=True, border=0)
 
     return render_template_string(HTML_PAGE, prediction=result_html)
 

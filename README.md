@@ -7,7 +7,7 @@
 
 
 A web-based machine learning application that classifies **EEG (Electroencephalogram) signals** into different mental states using an **ensemble of ML models** trained on EEG features.  
-Built with **Python, Flask, and Scikit-Learn**, containerized with **Docker**, and deployed seamlessly on **Render** 🚀  
+Built with **Python, Flask, and Scikit-Learn**, containerized with **Docker**, and deployed seamlessly on **Render** 
 
 🔗 **Live App:** [https://eeg-final-project.onrender.com](https://eeg-final-project.onrender.com)
 

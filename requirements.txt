@@ -6,3 +6,5 @@ lightgbm
 xgboost
 catboost
 imbalanced-learn
+matplotlib
+shap

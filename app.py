@@ -2,11 +2,18 @@ from flask import Flask, request, render_template_string
 import pandas as pd
 import joblib
 import os
+import matplotlib.pyplot as plt
+import io
+import base64
+import shap
 
-# Load your trained model
+# Load model
 model = joblib.load("model.pkl")
 
-# HTML template
+# SHAP explainer
+explainer = shap.Explainer(model)
+
+# HTML TEMPLATE
 HTML_PAGE = """
 <!doctype html>
 <html lang="en">
@@ -14,34 +21,24 @@ HTML_PAGE = """
 <meta charset="UTF-8">
 <title>EEG Classifier</title>
 <style>
-body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin: 0; padding: 0; }
-.container { max-width: 1000px; margin: 40px auto; background: #fff; padding: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-radius: 10px; }
-h1 { text-align: center; color: #333; }
-form { text-align: center; margin-bottom: 25px; }
-input[type=file] { padding: 8px; }
-input[type=submit] { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-input[type=submit]:hover { background: #45a049; }
-.table-container { overflow-x:auto; margin-top: 20px; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-th { background-color: #4CAF50; color: white; }
-tr:nth-child(even){background-color: #f9f9f9;}
-tr:hover {background-color: #f1f1f1;}
-.pred-0 { color: red; font-weight: bold; }
-.pred-1 { color: green; font-weight: bold; }
-.high { color: green; font-weight: bold; }
-.medium { color: orange; font-weight: bold; }
-.low { color: red; font-weight: bold; }
-.summary { font-weight: bold; margin-bottom: 15px; text-align: center; }
+body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
+.container { max-width: 1100px; margin: 40px auto; background: white; padding: 30px; border-radius: 10px; }
+h1, h2 { text-align: center; }
+form { text-align: center; margin-bottom: 20px; }
+input[type=submit] { padding: 10px 20px; background: green; color: white; border: none; border-radius: 5px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px; border: 1px solid #ddd; text-align: center; }
+.summary { text-align: center; font-weight: bold; margin-bottom: 15px; }
 </style>
 </head>
 <body>
 <div class="container">
+
 <h1>EEG Classifier</h1>
 
 <form action="/predict" method="post" enctype="multipart/form-data">
-  <input type="file" name="file" required>
-  <input type="submit" value="Upload & Predict">
+<input type="file" name="file" required>
+<input type="submit" value="Upload & Predict">
 </form>
 
 {% if summary %}
@@ -49,9 +46,22 @@ tr:hover {background-color: #f1f1f1;}
 {% endif %}
 
 {% if prediction %}
-<div class="table-container">
 {{ prediction|safe }}
-</div>
+{% endif %}
+
+{% if feature_importance %}
+<h2>Top Feature Importance</h2>
+{{ feature_importance|safe }}
+{% endif %}
+
+{% if feature_plot %}
+<h2>Feature Importance Graph</h2>
+<img src="data:image/png;base64,{{ feature_plot }}">
+{% endif %}
+
+{% if shap_plot %}
+<h2>SHAP Explanation (Sample 1)</h2>
+<img src="data:image/png;base64,{{ shap_plot }}">
 {% endif %}
 
 </div>
@@ -61,9 +71,9 @@ tr:hover {background-color: #f1f1f1;}
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def index():
-    return render_template_string(HTML_PAGE)
+# -----------------------
+# Helper Functions
+# -----------------------
 
 def confidence_label(p):
     if p is None:
@@ -75,6 +85,47 @@ def confidence_label(p):
     else:
         return "Low"
 
+def get_feature_importance(model, feature_names):
+    if hasattr(model, "feature_importances_"):
+        return pd.DataFrame({
+            "Feature": feature_names,
+            "Importance": model.feature_importances_
+        }).sort_values(by="Importance", ascending=False)
+    return None
+
+def plot_feature_importance(df):
+    plt.figure(figsize=(8,5))
+    plt.barh(df["Feature"], df["Importance"])
+    plt.gca().invert_yaxis()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    plt.close()
+    buf.seek(0)
+
+    return base64.b64encode(buf.read()).decode("utf-8")
+
+def get_shap_plot(sample):
+    shap_values = explainer(sample)
+
+    plt.figure()
+    shap.plots.waterfall(shap_values[0], show=False)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+
+    return base64.b64encode(buf.read()).decode("utf-8")
+
+# -----------------------
+# Routes
+# -----------------------
+
+@app.route("/", methods=["GET"])
+def index():
+    return render_template_string(HTML_PAGE)
+
 @app.route("/predict", methods=["POST"])
 def predict():
     file = request.files.get("file")
@@ -82,76 +133,67 @@ def predict():
         return "No file uploaded", 400
 
     df = pd.read_csv(file)
+    feature_names = df.columns.tolist()
 
-    # Match feature count
-    expected_features = model.n_features_in_
-    current_features = df.shape[1]
-
-    if current_features < expected_features:
-        missing_cols = pd.DataFrame(
-            0, index=df.index,
-            columns=[f"missing_{i}" for i in range(expected_features - current_features)]
-        )
-        df = pd.concat([df, missing_cols], axis=1)
-    elif current_features > expected_features:
-        df = df.iloc[:, :expected_features]
+    # Match features
+    expected = model.n_features_in_
+    if df.shape[1] < expected:
+        missing = pd.DataFrame(0, index=df.index,
+                               columns=[f"missing_{i}" for i in range(expected - df.shape[1])])
+        df = pd.concat([df, missing], axis=1)
+    elif df.shape[1] > expected:
+        df = df.iloc[:, :expected]
 
     # Predictions
     preds = model.predict(df)
 
-    # Probabilities (if supported)
+    # Probabilities
     if hasattr(model, "predict_proba"):
         probs = model.predict_proba(df)
         prob_class1 = probs[:, 1]
     else:
         prob_class1 = [None] * len(preds)
 
-    # Create result dataframe
     result_df = pd.DataFrame({
-        "Row": range(1, len(preds) + 1),
-        "Predicted_Class": preds.astype(int),
+        "Row": range(1, len(preds)+1),
+        "Prediction": preds,
         "Confidence": prob_class1
     })
 
-    # Add confidence level
     result_df["Confidence_Level"] = result_df["Confidence"].apply(confidence_label)
 
-    # Summary stats
-    count_0 = (preds == 0).sum()
-    count_1 = (preds == 1).sum()
+    # Summary
+    count1 = (preds == 1).sum()
+    count0 = (preds == 0).sum()
+    avg_conf = sum([p for p in prob_class1 if p is not None]) / len(prob_class1)
 
-    valid_probs = [p for p in prob_class1 if p is not None]
-    avg_conf = sum(valid_probs) / len(valid_probs) if valid_probs else 0
+    summary = f"Class1: {count1} | Class0: {count0} | Avg Confidence: {avg_conf:.2f}"
 
-    summary_text = f"""
-    Predicted 1: {count_1} samples |
-    Predicted 0: {count_0} samples |
-    Avg Confidence: {avg_conf:.2f}
-    """
+    prediction_html = result_df.to_html(index=False)
 
-    # Styling function
-    def style_prediction(val):
-        return 'color: green; font-weight: bold;' if val == 1 else 'color: red; font-weight: bold;'
+    # Feature importance
+    fi_df = get_feature_importance(model, feature_names)
+    if fi_df is not None:
+        top = fi_df.head(10)
+        feature_html = top.to_html(index=False)
+        feature_plot = plot_feature_importance(top)
+    else:
+        feature_html = None
+        feature_plot = None
 
-    def style_confidence(val):
-        if val == "High":
-            return 'color: green; font-weight: bold;'
-        elif val == "Medium":
-            return 'color: orange; font-weight: bold;'
-        elif val == "Low":
-            return 'color: red; font-weight: bold;'
-        return ''
-
-    styled_table = result_df.style \
-        .map(style_prediction, subset=["Predicted_Class"]) \
-        .map(style_confidence, subset=["Confidence_Level"]) \
-        .format({"Confidence": "{:.2f}"}) \
-        .to_html()
+    # SHAP
+    try:
+        shap_plot = get_shap_plot(df.iloc[[0]])
+    except:
+        shap_plot = None
 
     return render_template_string(
         HTML_PAGE,
-        prediction=styled_table,
-        summary=summary_text
+        prediction=prediction_html,
+        summary=summary,
+        feature_importance=feature_html,
+        feature_plot=feature_plot,
+        shap_plot=shap_plot
     )
 
 if __name__ == "__main__":

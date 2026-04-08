@@ -1,9 +1,7 @@
-Flask
-pandas
-joblib
+flask
+numpy
+scipy
 scikit-learn
-lightgbm
-xgboost
-catboost
-imbalanced-learn
-matplotlib
+joblib
+mne
+gunicorn

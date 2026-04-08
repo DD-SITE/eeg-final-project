@@ -1,182 +1,86 @@
-from flask import Flask, request, render_template_string
-import pandas as pd
+from flask import Flask, render_template, request
+import numpy as np
 import joblib
-import os
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Load model
-model = joblib.load("model.pkl")
-
-# -----------------------
-# HTML TEMPLATE
-# -----------------------
-HTML_PAGE = """
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>EEG Classifier</title>
-<style>
-body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
-.container { max-width: 1100px; margin: 40px auto; background: white; padding: 30px; border-radius: 10px; }
-h1, h2 { text-align: center; }
-form { text-align: center; margin-bottom: 20px; }
-input[type=submit] { padding: 10px 20px; background: green; color: white; border: none; border-radius: 5px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { padding: 8px; border: 1px solid #ddd; text-align: center; }
-.summary { text-align: center; font-weight: bold; margin-bottom: 15px; }
-</style>
-</head>
-<body>
-<div class="container">
-
-<h1>EEG Classifier</h1>
-
-<form action="/predict" method="post" enctype="multipart/form-data">
-<input type="file" name="file" required>
-<input type="submit" value="Upload & Predict">
-</form>
-
-{% if summary %}
-<div class="summary">{{ summary }}</div>
-{% endif %}
-
-{% if prediction %}
-{{ prediction|safe }}
-{% endif %}
-
-{% if feature_importance %}
-<h2>Top Feature Importance</h2>
-{{ feature_importance|safe }}
-{% endif %}
-
-{% if feature_plot %}
-<h2>Feature Importance Graph</h2>
-<img src="data:image/png;base64,{{ feature_plot }}">
-{% endif %}
-
-</div>
-</body>
-</html>
-"""
+import mne
+from scipy.signal import welch
 
 app = Flask(__name__)
 
-# -----------------------
-# Helper Functions
-# -----------------------
+# Load models
+model = joblib.load("model.pkl")
+scaler = joblib.load("scaler.pkl")
 
-def confidence_label(p):
-    if p is None:
-        return "N/A"
-    elif p > 0.8:
-        return "High"
-    elif p > 0.6:
-        return "Medium"
-    else:
-        return "Low"
+try:
+    pca = joblib.load("pca.pkl")
+    use_pca = True
+except:
+    use_pca = False
 
-def get_feature_importance(model, feature_names):
-    if hasattr(model, "feature_importances_"):
-        return pd.DataFrame({
-            "Feature": feature_names,
-            "Importance": model.feature_importances_
-        }).sort_values(by="Importance", ascending=False)
-    return None
 
-def plot_feature_importance(df):
-    plt.figure(figsize=(8,5))
-    plt.barh(df["Feature"], df["Importance"])
-    plt.gca().invert_yaxis()
+def bandpower(signal, sf=500, band=(8,13)):
+    f, Pxx = welch(signal, sf, nperseg=256)
+    idx = np.logical_and(f >= band[0], f <= band[1])
+    return np.sum(Pxx[idx])
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
 
-    return base64.b64encode(buf.read()).decode("utf-8")
+def extract_features(segment):
+    features = []
+    for ch in range(segment.shape[1]):
+        sig = segment[:, ch]
+        features.append(np.mean(sig))
+        features.append(np.std(sig))
+        features.append(bandpower(sig, band=(8,13)))
+        features.append(bandpower(sig, band=(13,30)))
+    return features
 
-# -----------------------
-# Routes
-# -----------------------
 
-@app.route("/", methods=["GET"])
+def process_edf(file_path):
+    raw = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
+
+    eeg_channels = [
+        'EEG Fp1','EEG Fp2','EEG F3','EEG F4','EEG F7','EEG F8',
+        'EEG T3','EEG T4','EEG C3','EEG C4','EEG T5','EEG T6',
+        'EEG P3','EEG P4','EEG O1','EEG O2','EEG Fz','EEG Cz','EEG Pz'
+    ]
+
+    raw.pick(eeg_channels)
+    raw.filter(0.5, 45)
+
+    data = raw.get_data().T
+
+    # Take only first segment (fast for free tier)
+    segment = data[:500]
+
+    features = extract_features(segment)
+
+    X = np.array(features).reshape(1, -1)
+    X = scaler.transform(X)
+
+    if use_pca:
+        X = pca.transform(X)
+
+    prob = model.predict_proba(X)[0][1]
+    pred = 1 if prob > 0.30 else 0
+
+    return pred, prob
+
+
+@app.route("/", methods=["GET", "POST"])
 def index():
-    return render_template_string(HTML_PAGE)
+    result = None
+    prob = None
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    file = request.files.get("file")
-    if not file:
-        return "No file uploaded", 400
+    if request.method == "POST":
+        file = request.files["file"]
+        path = "temp.edf"
+        file.save(path)
 
-    df = pd.read_csv(file)
-    feature_names = df.columns.tolist()
+        pred, prob = process_edf(path)
 
-    # Match model feature size
-    expected = model.n_features_in_
+        result = "Good Performance" if pred == 1 else "Bad Performance"
 
-    if df.shape[1] < expected:
-        missing = pd.DataFrame(
-            0, index=df.index,
-            columns=[f"missing_{i}" for i in range(expected - df.shape[1])]
-        )
-        df = pd.concat([df, missing], axis=1)
+    return render_template("index.html", result=result, prob=prob)
 
-    elif df.shape[1] > expected:
-        df = df.iloc[:, :expected]
-
-    # Predictions
-    preds = model.predict(df)
-
-    # Probabilities
-    if hasattr(model, "predict_proba"):
-        probs = model.predict_proba(df)
-        prob_class1 = probs[:, 1]
-    else:
-        prob_class1 = [None] * len(preds)
-
-    result_df = pd.DataFrame({
-        "Row": range(1, len(preds)+1),
-        "Prediction": preds,
-        "Confidence": prob_class1
-    })
-
-    result_df["Confidence_Level"] = result_df["Confidence"].apply(confidence_label)
-
-    # Summary
-    count1 = (preds == 1).sum()
-    count0 = (preds == 0).sum()
-
-    valid_probs = [p for p in prob_class1 if p is not None]
-    avg_conf = sum(valid_probs)/len(valid_probs) if valid_probs else 0
-
-    summary = f"Class1: {count1} | Class0: {count0} | Avg Confidence: {avg_conf:.2f}"
-
-    # Limit table (IMPORTANT)
-    prediction_html = result_df.head(100).to_html(index=False)
-
-    # Feature Importance
-    fi_df = get_feature_importance(model, feature_names)
-
-    if fi_df is not None:
-        top = fi_df.head(10)
-        feature_html = top.to_html(index=False)
-        feature_plot = plot_feature_importance(top)
-    else:
-        feature_html = None
-        feature_plot = None
-
-    return render_template_string(
-        HTML_PAGE,
-        prediction=prediction_html,
-        summary=summary,
-        feature_importance=feature_html,
-        feature_plot=feature_plot
-    )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)

@@ -2,28 +2,16 @@ from flask import Flask, request, render_template_string
 import pandas as pd
 import joblib
 import os
-import matplotlib
-matplotlib.use("Agg")   # ✅ IMPORTANT for Render
 import matplotlib.pyplot as plt
 import io
 import base64
 
-# -----------------------
-# LOAD MODEL + FEATURES
-# -----------------------
-
+# Load model
 model = joblib.load("model.pkl")
-
-# Load feature names (IMPORTANT)
-try:
-    feature_names = joblib.load("features.pkl")
-except:
-    feature_names = None   # fallback
 
 # -----------------------
 # HTML TEMPLATE
 # -----------------------
-
 HTML_PAGE = """
 <!doctype html>
 <html lang="en">
@@ -77,7 +65,7 @@ th, td { padding: 8px; border: 1px solid #ddd; text-align: center; }
 app = Flask(__name__)
 
 # -----------------------
-# HELPER FUNCTIONS
+# Helper Functions
 # -----------------------
 
 def confidence_label(p):
@@ -90,72 +78,60 @@ def confidence_label(p):
     else:
         return "Low"
 
-
 def get_feature_importance(model, feature_names):
-    if hasattr(model, "feature_importances_") and feature_names:
+    if hasattr(model, "feature_importances_"):
         return pd.DataFrame({
             "Feature": feature_names,
             "Importance": model.feature_importances_
         }).sort_values(by="Importance", ascending=False)
     return None
 
-
 def plot_feature_importance(df):
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(8,5))
     plt.barh(df["Feature"], df["Importance"])
     plt.gca().invert_yaxis()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png")
+    plt.savefig(buf, format="png", bbox_inches="tight")
     plt.close()
     buf.seek(0)
 
     return base64.b64encode(buf.read()).decode("utf-8")
 
-
 # -----------------------
-# ROUTES
+# Routes
 # -----------------------
 
 @app.route("/", methods=["GET"])
 def index():
     return render_template_string(HTML_PAGE)
 
-
-@app.route("/health")
-def health():
-    return "OK", 200
-
-
 @app.route("/predict", methods=["POST"])
 def predict():
     file = request.files.get("file")
-
     if not file:
         return "No file uploaded", 400
 
-    # ✅ Validate file
-    if not file.filename.endswith(".csv"):
-        return "Upload a CSV file only", 400
+    df = pd.read_csv(file)
+    feature_names = df.columns.tolist()
 
-    try:
-        df = pd.read_csv(file)
-    except:
-        return "Invalid CSV file", 400
+    # Match model feature size
+    expected = model.n_features_in_
 
-    # ✅ Limit size (performance)
-    df = df.head(500)
+    if df.shape[1] < expected:
+        missing = pd.DataFrame(
+            0, index=df.index,
+            columns=[f"missing_{i}" for i in range(expected - df.shape[1])]
+        )
+        df = pd.concat([df, missing], axis=1)
 
-    # ✅ FIX: Align features properly
-    if feature_names:
-        df = df.reindex(columns=feature_names, fill_value=0)
+    elif df.shape[1] > expected:
+        df = df.iloc[:, :expected]
 
-    # -----------------------
-    # PREDICTIONS
-    # -----------------------
-
+    # Predictions
     preds = model.predict(df)
 
+    # Probabilities
     if hasattr(model, "predict_proba"):
         probs = model.predict_proba(df)
         prob_class1 = probs[:, 1]
@@ -163,38 +139,26 @@ def predict():
         prob_class1 = [None] * len(preds)
 
     result_df = pd.DataFrame({
-        "Row": range(1, len(preds) + 1),
+        "Row": range(1, len(preds)+1),
         "Prediction": preds,
         "Confidence": prob_class1
     })
 
     result_df["Confidence_Level"] = result_df["Confidence"].apply(confidence_label)
 
-    # Limit rows in UI
-    result_df = result_df.head(100)
-
-    # -----------------------
-    # SUMMARY
-    # -----------------------
-
+    # Summary
     count1 = (preds == 1).sum()
     count0 = (preds == 0).sum()
 
     valid_probs = [p for p in prob_class1 if p is not None]
-
-    if valid_probs:
-        avg_conf = sum(valid_probs) / len(valid_probs)
-    else:
-        avg_conf = 0
+    avg_conf = sum(valid_probs)/len(valid_probs) if valid_probs else 0
 
     summary = f"Class1: {count1} | Class0: {count0} | Avg Confidence: {avg_conf:.2f}"
 
-    prediction_html = result_df.to_html(index=False)
+    # Limit table (IMPORTANT)
+    prediction_html = result_df.head(100).to_html(index=False)
 
-    # -----------------------
-    # FEATURE IMPORTANCE
-    # -----------------------
-
+    # Feature Importance
     fi_df = get_feature_importance(model, feature_names)
 
     if fi_df is not None:
@@ -212,11 +176,6 @@ def predict():
         feature_importance=feature_html,
         feature_plot=feature_plot
     )
-
-
-# -----------------------
-# MAIN
-# -----------------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

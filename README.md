@@ -1,4 +1,4 @@
-# 🧠 EEG Signal Classification Web App  
+#  EEG Signal Classification Web App  
 [![Python](https://img.shields.io/badge/Python-3.10-blue.svg)](https://www.python.org/) 
 [![Flask](https://img.shields.io/badge/Flask-Framework-black.svg)](https://flask.palletsprojects.com/) 
 [![Machine Learning](https://img.shields.io/badge/Model-Ensemble-success.svg)]()
@@ -13,16 +13,16 @@ Built with **Python, Flask, and Scikit-Learn**, containerized with **Docker**, a
 
 ---
 
-## 🧩 Features
-- 📂 Upload EEG data (CSV format)
-- ⚙️ Automatically preprocesses and feeds data to a trained ensemble model
-- 🧠 Predicts the EEG signal class (mental state)
-- 📊 Displays prediction results in an interactive web interface
-- 🌐 Fully containerized and deployed on Render using Docker
+##  Features
+-  Upload EEG data (CSV format)
+-  Automatically preprocesses and feeds data to a trained ensemble model
+-  Predicts the EEG signal class (mental state)
+-  Displays prediction results in an interactive web interface
+-  Fully containerized and deployed on Render using Docker
 
 ---
 
-## 🧠 Tech Stack
+##  Tech Stack
 | Layer | Technologies Used |
 |-------|--------------------|
 | **Frontend** | HTML, CSS (Flask templates) |
@@ -55,7 +55,7 @@ http://localhost:8080
 
 ---
 
-## 🧪 Model Details
+##  Model Details
 The notebook explores and trains multiple models:
 - **K-Nearest Neighbors (KNN)**
 - **Logistic Regression**
@@ -63,13 +63,14 @@ The notebook explores and trains multiple models:
 - **XGBoost**
 - **LightGBM**
 - **CatBoost**
+- **CNN**
 
 An **ensemble model** was created to combine the strengths of individual models, achieving higher accuracy and stability.  
 The final trained model was saved as **`model.pkl`**, which is used in the deployed web app for real-time inference.
 
 ---
 
-## 🚀 Deployment
+##  Deployment
 This project is fully containerized using **Docker** and deployed on **Render**.
 
 **Dockerfile**
@@ -89,10 +90,13 @@ Port: 8080
 
 Region: Singapore (for Indian users, best latency)
 ---
-## 📦 Dataset  
+##  Dataset  
 
-This project uses the **Complete EEG Dataset** available publicly on Kaggle:  
-🔗 [Complete EEG Dataset – Kaggle](https://www.kaggle.com/datasets/amananandrai/complete-eeg-dataset)  
+This project uses the **Complete EEG Dataset** available publicly on PhysioNet:  
+🔗 [Complete EEG Dataset – PhysioNet](https://physionet.org/content/eegmat/1.0.0/) 
+For the csv files you can access them [here](https://www.kaggle.com/datasets/amananandrai/complete-eeg-dataset)
+For more information on dataset [visit](https://www.mdpi.com/2306-5729/4/1/14)
+
 
 The dataset contains EEG signal data from multiple subjects, captured under different mental states and experimental conditions. Each record consists of a series of EEG channel readings and a label representing the associated cognitive state.  
 

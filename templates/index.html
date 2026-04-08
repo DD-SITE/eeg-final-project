@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EEG Classification</title>
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            background: #0f172a;
+            color: white;
+        }
+        .box {
+            margin-top: 100px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 10px;
+        }
+        .result {
+            font-size: 24px;
+            margin-top: 20px;
+            color: #22c55e;
+        }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>EEG Signal Classification</h1>
+
+        <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" required>
+            <br>
+            <button type="submit">Predict</button>
+        </form>
+
+        {% if result %}
+            <div class="result">
+                Result: {{ result }} <br>
+                Probability: {{ prob }}
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

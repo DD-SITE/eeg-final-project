@@ -5,3 +5,6 @@ scikit-learn
 joblib
 mne
 gunicorn
+xgboost
+lightgbm
+catboost

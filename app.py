@@ -1,9 +1,7 @@
-import os
-import joblib
-import pandas as pd
 from flask import Flask, request, render_template_string
-
-app = Flask(__name__)
+import pandas as pd
+import joblib
+import os
 
 # Load your trained model
 model = joblib.load("model.pkl")
@@ -16,72 +14,28 @@ HTML_PAGE = """
 <meta charset="UTF-8">
 <title>EEG Classifier</title>
 <style>
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: #f0f2f5;
-    margin: 0;
-    padding: 0;
-}
-.container {
-    max-width: 1000px;
-    margin: 40px auto;
-    background: #fff;
-    padding: 30px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    border-radius: 10px;
-}
-h1 {
-    text-align: center;
-    color: #333;
-}
-form {
-    text-align: center;
-    margin-bottom: 25px;
-}
-input[type=file] {
-    padding: 8px;
-}
-table {
-    border-collapse: collapse;
-    width: 100%;
-}
-th, td {
-    padding: 10px;
-    border-bottom: 1px solid #ddd;
-    text-align: center;
-}
-tr:hover {
-    background-color: #f1f1f1;
-}
-.pred-0 {
-    color: red;
-    font-weight: bold;
-}
-.pred-1 {
-    color: green;
-    font-weight: bold;
-}
-.high {
-    color: green;
-    font-weight: bold;
-}
-.medium {
-    color: orange;
-    font-weight: bold;
-}
-.low {
-    color: red;
-    font-weight: bold;
-}
-.summary {
-    font-weight: bold;
-    margin-bottom: 15px;
-    text-align: center;
-}
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin: 0; padding: 0; }
+.container { max-width: 1000px; margin: 40px auto; background: #fff; padding: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-radius: 10px; }
+h1 { text-align: center; color: #333; }
+form { text-align: center; margin-bottom: 25px; }
+input[type=file] { padding: 8px; }
+input[type=submit] { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+input[type=submit]:hover { background: #45a049; }
+.table-container { overflow-x:auto; margin-top: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+th { background-color: #4CAF50; color: white; }
+tr:nth-child(even){background-color: #f9f9f9;}
+tr:hover {background-color: #f1f1f1;}
+.pred-0 { color: red; font-weight: bold; }
+.pred-1 { color: green; font-weight: bold; }
+.high { color: green; font-weight: bold; }
+.medium { color: orange; font-weight: bold; }
+.low { color: red; font-weight: bold; }
+.summary { font-weight: bold; margin-bottom: 15px; text-align: center; }
 </style>
 </head>
 <body>
-
 <div class="container">
 <h1>EEG Classifier</h1>
 
@@ -91,14 +45,12 @@ tr:hover {
 </form>
 
 {% if summary %}
-<div class="summary">
-    {{ summary }}
-</div>
+<div class="summary">{{ summary }}</div>
 {% endif %}
 
 {% if prediction %}
-<div>
-    {{ prediction|safe }}
+<div class="table-container">
+{{ prediction|safe }}
 </div>
 {% endif %}
 
@@ -107,10 +59,11 @@ tr:hover {
 </html>
 """
 
-@app.route("/")
+app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
 def index():
     return render_template_string(HTML_PAGE)
-
 
 def confidence_label(p):
     if p is None:
@@ -122,13 +75,11 @@ def confidence_label(p):
     else:
         return "Low"
 
-
 @app.route("/predict", methods=["POST"])
 def predict():
     file = request.files.get("file")
-
     if not file:
-        return render_template_string(HTML_PAGE, prediction="No file uploaded")
+        return "No file uploaded", 400
 
     df = pd.read_csv(file)
 
@@ -138,12 +89,10 @@ def predict():
 
     if current_features < expected_features:
         missing_cols = pd.DataFrame(
-            0,
-            index=df.index,
+            0, index=df.index,
             columns=[f"missing_{i}" for i in range(expected_features - current_features)]
         )
         df = pd.concat([df, missing_cols], axis=1)
-
     elif current_features > expected_features:
         df = df.iloc[:, :expected_features]
 
@@ -180,7 +129,7 @@ def predict():
     Avg Confidence: {avg_conf:.2f}
     """
 
-    # Styling functions
+    # Styling function
     def style_prediction(val):
         return 'color: green; font-weight: bold;' if val == 1 else 'color: red; font-weight: bold;'
 
@@ -193,13 +142,11 @@ def predict():
             return 'color: red; font-weight: bold;'
         return ''
 
-    styled_table = (
-        result_df.style
-        .map(style_prediction, subset=["Predicted_Class"])
-        .map(style_confidence, subset=["Confidence_Level"])
-        .format({"Confidence": "{:.2f}"})
+    styled_table = result_df.style \
+        .map(style_prediction, subset=["Predicted_Class"]) \
+        .map(style_confidence, subset=["Confidence_Level"]) \
+        .format({"Confidence": "{:.2f}"}) \
         .to_html()
-    )
 
     return render_template_string(
         HTML_PAGE,
@@ -207,7 +154,6 @@ def predict():
         summary=summary_text
     )
 
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
